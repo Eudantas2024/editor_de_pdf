@@ -17,13 +17,13 @@
       border: 1px solid #ccc;
       background: white;
       overflow: hidden;
-      touch-action: none; /* necessário para zoom e arrastar */
+      touch-action: none;
+      cursor: grab;
     }
 
     canvas {
       display: block;
       transform-origin: center center;
-      transition: transform 0.05s linear;
     }
 
     #overlay {
@@ -88,6 +88,7 @@
 
 <div class="toolbar">
   <input type="file" id="file-input" accept="application/pdf">
+  <button id="move-btn">🖐️ Mover</button>
   <button id="draw-btn">✏️ Rabiscar</button>
   <button id="text-btn">🔤 Adicionar Texto</button>
   <label for="thickness">Espessura:</label>
@@ -101,9 +102,7 @@
   <button id="delete-btn">Excluir texto</button>
 </div>
 
-<!-- PDF.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-<!-- jsPDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <script>
@@ -113,17 +112,14 @@
   const ctx = overlay.getContext('2d');
   const deleteBtn = document.getElementById('delete-btn');
   const container = document.getElementById('pdf-container');
-
   let drawing = false;
   let mode = null;
   let pdfPage, pdfScale = 1.2;
   let texts = [];
   let selectedText = null;
-
-  // Controle de zoom e pan
   let baseScale = 1.0;
   let lastDistance = null;
-  let offsetX = 0, offsetY = 0;
+  let offsetX = 0, offsetY = 0; // posição de deslocamento
   let startX = 0, startY = 0;
   let isPanning = false;
 
@@ -142,7 +138,6 @@
     reader.readAsArrayBuffer(file);
   });
 
-  // === Renderização do PDF ===
   async function renderPDF() {
     const viewport = pdfPage.getViewport({ scale: pdfScale });
     pdfCanvas.width = viewport.width;
@@ -155,6 +150,7 @@
   }
 
   // === Alternar Modos ===
+  document.getElementById('move-btn').onclick = () => mode = 'move';
   document.getElementById('draw-btn').onclick = () => mode = 'draw';
   document.getElementById('text-btn').onclick = () => mode = 'text';
 
@@ -163,11 +159,11 @@
     const rect = overlay.getBoundingClientRect();
     if (e.touches && e.touches.length > 0) {
       return {
-        x: (e.touches[0].clientX - rect.left - offsetX) / baseScale,
-        y: (e.touches[0].clientY - rect.top - offsetY) / baseScale
+        x: (e.touches[0].clientX - rect.left) / baseScale,
+        y: (e.touches[0].clientY - rect.top) / baseScale
       };
     } else {
-      return { x: (e.offsetX - offsetX) / baseScale, y: (e.offsetY - offsetY) / baseScale };
+      return { x: e.offsetX / baseScale, y: e.offsetY / baseScale };
     }
   }
 
@@ -187,7 +183,7 @@
     });
   }
 
-  // === Adicionar texto / iniciar rabisco ===
+  // === Adicionar texto ou desenhar ===
   function startDraw(e) {
     if (e.touches && e.touches.length > 1) return;
     const { x, y } = getCoords(e);
@@ -209,8 +205,8 @@
       if (selectedText) {
         redrawTexts();
         deleteBtn.style.display = 'block';
-        deleteBtn.style.left = `${selectedText.x * baseScale + offsetX}px`;
-        deleteBtn.style.top = `${selectedText.y * baseScale + offsetY + 5}px`;
+        deleteBtn.style.left = `${selectedText.x * baseScale}px`;
+        deleteBtn.style.top = `${selectedText.y * baseScale + 5}px`;
       } else {
         deleteBtn.style.display = 'none';
         const texto = prompt("Digite o texto:");
@@ -219,73 +215,67 @@
           redrawTexts();
         }
       }
+    } else if (mode === 'move') {
+      isPanning = true;
+      startX = e.touches ? e.touches[0].clientX : e.clientX;
+      startY = e.touches ? e.touches[0].clientY : e.clientY;
+      container.style.cursor = "grabbing";
     }
     e.preventDefault();
   }
 
   function drawMove(e) {
-    if (!drawing || mode !== 'draw') return;
-    const { x, y } = getCoords(e);
-    const thickness = document.getElementById('thickness').value;
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = thickness;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.stroke();
+    if (mode === 'draw' && drawing) {
+      const { x, y } = getCoords(e);
+      const thickness = document.getElementById('thickness').value;
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = thickness;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke();
+    } else if (mode === 'move' && isPanning) {
+      const currentX = e.touches ? e.touches[0].clientX : e.clientX;
+      const currentY = e.touches ? e.touches[0].clientY : e.clientY;
+      offsetX += (currentX - startX);
+      offsetY += (currentY - startY);
+      startX = currentX;
+      startY = currentY;
+      pdfCanvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+      overlay.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+    }
     e.preventDefault();
   }
 
   function endDraw(e) {
     drawing = false;
+    isPanning = false;
+    container.style.cursor = "grab";
     e.preventDefault();
   }
 
-  // === Movimento com um dedo (pan) ===
-  container.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 1 && mode !== 'draw' && mode !== 'text') {
-      isPanning = true;
-      startX = e.touches[0].clientX - offsetX;
-      startY = e.touches[0].clientY - offsetY;
-    }
-  });
-
+  // === Zoom com pinça ===
   container.addEventListener('touchmove', (e) => {
-    // Pinça (zoom)
     if (e.touches.length === 2) {
       e.preventDefault();
       const [touch1, touch2] = e.touches;
       const dx = touch2.clientX - touch1.clientX;
       const dy = touch2.clientY - touch1.clientY;
       const distance = Math.sqrt(dx * dx + dy * dy);
-
       if (lastDistance) {
         const scaleChange = distance / lastDistance;
         baseScale = Math.min(Math.max(baseScale * scaleChange, 0.5), 3);
-        applyTransform();
+        pdfCanvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+        overlay.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
       }
       lastDistance = distance;
-    }
-    // Movimento (arrastar)
-    else if (e.touches.length === 1 && isPanning) {
-      e.preventDefault();
-      offsetX = e.touches[0].clientX - startX;
-      offsetY = e.touches[0].clientY - startY;
-      applyTransform();
     }
   });
 
   container.addEventListener('touchend', () => {
     lastDistance = null;
-    isPanning = false;
   });
 
-  function applyTransform() {
-    pdfCanvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
-    overlay.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
-  }
-
-  // === Botão Excluir ===
   deleteBtn.addEventListener('click', () => {
     if (selectedText) {
       texts = texts.filter(t => t !== selectedText);
@@ -295,7 +285,7 @@
     }
   });
 
-  // === Eventos de desenho ===
+  // === Eventos de interação ===
   overlay.addEventListener('mousedown', startDraw);
   overlay.addEventListener('mousemove', drawMove);
   overlay.addEventListener('mouseup', endDraw);
@@ -309,14 +299,12 @@
   document.getElementById('save-btn').addEventListener('click', async () => {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF();
-
     const combinedCanvas = document.createElement('canvas');
     combinedCanvas.width = pdfCanvas.width;
     combinedCanvas.height = pdfCanvas.height;
     const combinedCtx = combinedCanvas.getContext('2d');
     combinedCtx.drawImage(pdfCanvas, 0, 0);
     combinedCtx.drawImage(overlay, 0, 0);
-
     const imgData = combinedCanvas.toDataURL("image/jpeg", 1.0);
     pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
     pdf.save('pdf_editado.pdf');
