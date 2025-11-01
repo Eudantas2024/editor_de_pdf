@@ -38,11 +38,11 @@
 
 <div id="pdf-container"></div>
 
-<script type="module">
-import { PDFDocument, rgb } from "https://cdn.skypack.dev/pdf-lib";
-import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/+esm";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.worker.min.js";
+<!-- Bibliotecas importadas via script tradicional -->
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
 
 let pdfBytesOriginal = null;
 let page, scale = 1.3, canvas, ctx;
@@ -80,8 +80,15 @@ function habilitarInteracao() {
   window.addEventListener("mouseup", pararDesenho);
 
   // TOQUE
-  canvas.addEventListener("touchstart", (e) => iniciarDesenho(e.touches[0]));
-  canvas.addEventListener("touchmove", (e) => desenhar(e.touches[0]));
+  canvas.addEventListener("touchstart", (e) => {
+    const t = e.touches[0];
+    iniciarDesenho(t);
+  });
+  canvas.addEventListener("touchmove", (e) => {
+    const t = e.touches[0];
+    desenhar(t);
+    e.preventDefault();
+  });
   canvas.addEventListener("touchend", pararDesenho);
 }
 
@@ -166,7 +173,7 @@ async function renderPDF() {
 }
 
 document.getElementById("salvar").addEventListener("click", async () => {
-  const pdfDoc = await PDFDocument.load(pdfBytesOriginal);
+  const pdfDoc = await PDFLib.PDFDocument.load(pdfBytesOriginal);
   const page = pdfDoc.getPages()[0];
   const { height } = page.getSize();
 
@@ -176,7 +183,7 @@ document.getElementById("salvar").addEventListener("click", async () => {
         start: { x: trilha[i - 1].x, y: height - trilha[i - 1].y },
         end: { x: trilha[i].x, y: height - trilha[i].y },
         thickness: parseFloat(espessuraInput.value),
-        color: rgb(0, 0, 0)
+        color: PDFLib.rgb(0, 0, 0)
       });
     }
   });
@@ -186,7 +193,7 @@ document.getElementById("salvar").addEventListener("click", async () => {
       x: t.x,
       y: height - t.y,
       size: 12,
-      color: rgb(0, 0, 0)
+      color: PDFLib.rgb(0, 0, 0)
     });
   });
 
