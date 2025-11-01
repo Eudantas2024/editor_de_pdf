@@ -17,12 +17,13 @@
       border: 1px solid #ccc;
       background: white;
       overflow: hidden;
-      touch-action: none; /* necessário para controle total do toque */
+      touch-action: none; /* necessário para zoom e arrastar */
     }
 
     canvas {
       display: block;
-      transform-origin: center center; /* garante o zoom suave */
+      transform-origin: center center;
+      transition: transform 0.05s linear;
     }
 
     #overlay {
@@ -112,13 +113,19 @@
   const ctx = overlay.getContext('2d');
   const deleteBtn = document.getElementById('delete-btn');
   const container = document.getElementById('pdf-container');
+
   let drawing = false;
   let mode = null;
   let pdfPage, pdfScale = 1.2;
   let texts = [];
   let selectedText = null;
-  let baseScale = 1.0; // escala atual exibida
+
+  // Controle de zoom e pan
+  let baseScale = 1.0;
   let lastDistance = null;
+  let offsetX = 0, offsetY = 0;
+  let startX = 0, startY = 0;
+  let isPanning = false;
 
   // === Exibir PDF ===
   fileInput.addEventListener('change', async (e) => {
@@ -135,7 +142,7 @@
     reader.readAsArrayBuffer(file);
   });
 
-  // === Função de renderização do PDF ===
+  // === Renderização do PDF ===
   async function renderPDF() {
     const viewport = pdfPage.getViewport({ scale: pdfScale });
     pdfCanvas.width = viewport.width;
@@ -156,11 +163,11 @@
     const rect = overlay.getBoundingClientRect();
     if (e.touches && e.touches.length > 0) {
       return {
-        x: (e.touches[0].clientX - rect.left) / baseScale,
-        y: (e.touches[0].clientY - rect.top) / baseScale
+        x: (e.touches[0].clientX - rect.left - offsetX) / baseScale,
+        y: (e.touches[0].clientY - rect.top - offsetY) / baseScale
       };
     } else {
-      return { x: e.offsetX / baseScale, y: e.offsetY / baseScale };
+      return { x: (e.offsetX - offsetX) / baseScale, y: (e.offsetY - offsetY) / baseScale };
     }
   }
 
@@ -180,9 +187,9 @@
     });
   }
 
-  // === Adicionar texto ===
+  // === Adicionar texto / iniciar rabisco ===
   function startDraw(e) {
-    if (e.touches && e.touches.length > 1) return; // ignorar gestos de pinça
+    if (e.touches && e.touches.length > 1) return;
     const { x, y } = getCoords(e);
 
     if (mode === 'draw') {
@@ -202,8 +209,8 @@
       if (selectedText) {
         redrawTexts();
         deleteBtn.style.display = 'block';
-        deleteBtn.style.left = `${selectedText.x * baseScale}px`;
-        deleteBtn.style.top = `${selectedText.y * baseScale + 5}px`;
+        deleteBtn.style.left = `${selectedText.x * baseScale + offsetX}px`;
+        deleteBtn.style.top = `${selectedText.y * baseScale + offsetY + 5}px`;
       } else {
         deleteBtn.style.display = 'none';
         const texto = prompt("Digite o texto:");
@@ -234,8 +241,17 @@
     e.preventDefault();
   }
 
-  // === Zoom com pinça ===
+  // === Movimento com um dedo (pan) ===
+  container.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1 && mode !== 'draw' && mode !== 'text') {
+      isPanning = true;
+      startX = e.touches[0].clientX - offsetX;
+      startY = e.touches[0].clientY - offsetY;
+    }
+  });
+
   container.addEventListener('touchmove', (e) => {
+    // Pinça (zoom)
     if (e.touches.length === 2) {
       e.preventDefault();
       const [touch1, touch2] = e.touches;
@@ -246,16 +262,28 @@
       if (lastDistance) {
         const scaleChange = distance / lastDistance;
         baseScale = Math.min(Math.max(baseScale * scaleChange, 0.5), 3);
-        pdfCanvas.style.transform = `scale(${baseScale})`;
-        overlay.style.transform = `scale(${baseScale})`;
+        applyTransform();
       }
       lastDistance = distance;
+    }
+    // Movimento (arrastar)
+    else if (e.touches.length === 1 && isPanning) {
+      e.preventDefault();
+      offsetX = e.touches[0].clientX - startX;
+      offsetY = e.touches[0].clientY - startY;
+      applyTransform();
     }
   });
 
   container.addEventListener('touchend', () => {
     lastDistance = null;
+    isPanning = false;
   });
+
+  function applyTransform() {
+    pdfCanvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+    overlay.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+  }
 
   // === Botão Excluir ===
   deleteBtn.addEventListener('click', () => {
