@@ -28,8 +28,8 @@
   .toolbar {
     margin-bottom: 10px;
   }
-  button, select {
-    padding: 8px 15px;
+  button, input[type="range"], label {
+    padding: 8px 10px;
     margin: 3px;
     border: none;
     background-color: #0078d7;
@@ -37,16 +37,18 @@
     border-radius: 4px;
     cursor: pointer;
   }
-  button:hover, select:hover {
+  button:hover {
     background-color: #005fa3;
   }
-  #text-input {
-    position: absolute;
-    border: 1px solid #000;
-    background: #fff;
-    display: none;
-    font-family: Arial, sans-serif;
-    z-index: 10;
+  input[type="range"] {
+    width: 100px;
+    background: transparent;
+    cursor: pointer;
+  }
+  label {
+    background: none;
+    color: black;
+    cursor: default;
   }
 </style>
 </head>
@@ -57,28 +59,15 @@
 <div class="toolbar">
   <input type="file" id="file-input" accept="application/pdf">
   <button id="draw-btn">✏️ Rabiscar</button>
-  <select id="line-width">
-    <option value="1">1px</option>
-    <option value="2" selected>2px</option>
-    <option value="4">4px</option>
-    <option value="6">6px</option>
-    <option value="8">8px</option>
-  </select>
   <button id="text-btn">🔤 Adicionar Texto</button>
-  <select id="font-size">
-    <option value="12">12px</option>
-    <option value="16" selected>16px</option>
-    <option value="20">20px</option>
-    <option value="24">24px</option>
-    <option value="30">30px</option>
-  </select>
+  <label for="thickness">Espessura:</label>
+  <input type="range" id="thickness" min="1" max="10" value="2">
   <button id="save-btn">💾 Salvar PDF</button>
 </div>
 
 <div id="pdf-container">
   <canvas id="pdf-canvas"></canvas>
   <canvas id="overlay"></canvas>
-  <input type="text" id="text-input" placeholder="Digite aqui...">
 </div>
 
 <!-- PDF.js -->
@@ -90,95 +79,94 @@
 const fileInput = document.getElementById('file-input');
 const pdfCanvas = document.getElementById('pdf-canvas');
 const overlay = document.getElementById('overlay');
-const textInput = document.getElementById('text-input');
 const ctx = overlay.getContext('2d');
 let drawing = false;
 let mode = null;
-let pdfPage;
-let pdfScale = 1.2;
+let pdfPage, pdfScale = 1.2;
 
-// Exibir o PDF
+// === Exibir PDF ===
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  const fileReader = new FileReader();
-  fileReader.onload = async function() {
+  const reader = new FileReader();
+  reader.onload = async function() {
     const typedArray = new Uint8Array(this.result);
     const pdf = await pdfjsLib.getDocument(typedArray).promise;
     pdfPage = await pdf.getPage(1);
 
     const viewport = pdfPage.getViewport({ scale: pdfScale });
-    const context = pdfCanvas.getContext('2d');
     pdfCanvas.width = viewport.width;
     pdfCanvas.height = viewport.height;
     overlay.width = viewport.width;
     overlay.height = viewport.height;
 
-    const renderContext = { canvasContext: context, viewport: viewport };
-    await pdfPage.render(renderContext).promise;
+    const context = pdfCanvas.getContext('2d');
+    await pdfPage.render({ canvasContext: context, viewport }).promise;
   };
-  fileReader.readAsArrayBuffer(file);
+  reader.readAsArrayBuffer(file);
 });
 
-// Alternar modos
-document.getElementById('draw-btn').onclick = () => {
-  mode = 'draw';
-  textInput.style.display = 'none';
-};
-document.getElementById('text-btn').onclick = () => {
-  mode = 'text';
-};
+// === Alternar Modos ===
+document.getElementById('draw-btn').onclick = () => mode = 'draw';
+document.getElementById('text-btn').onclick = () => mode = 'text';
 
-// Desenhar
+// === Rabiscar e Adicionar Texto ===
 overlay.addEventListener('mousedown', (e) => {
   if (mode === 'draw') {
     drawing = true;
     ctx.beginPath();
     ctx.moveTo(e.offsetX, e.offsetY);
   } else if (mode === 'text') {
-    // Mostrar campo de texto na posição clicada
-    textInput.style.display = 'block';
-    textInput.style.left = (overlay.offsetLeft + e.offsetX) + 'px';
-    textInput.style.top = (overlay.offsetTop + e.offsetY) + 'px';
-    textInput.value = '';
-    textInput.focus();
-    textInput.dataset.x = e.offsetX;
-    textInput.dataset.y = e.offsetY;
+    const x = e.offsetX;
+    const y = e.offsetY;
+
+    // Desenha ponto vermelho temporário
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+    ctx.fillStyle = "red";
+    ctx.fill();
+
+    // Solicita o texto
+    setTimeout(() => {
+      const texto = prompt("Digite o texto:");
+      if (texto) {
+        // Limpa o ponto vermelho
+        const radius = 5;
+        ctx.clearRect(x - radius - 1, y - radius - 1, radius * 2 + 2, radius * 2 + 2);
+
+        // Adiciona o texto no mesmo ponto
+        ctx.font = "16px Arial";
+        ctx.fillStyle = "red";
+        ctx.fillText(texto, x, y);
+      } else {
+        // Se cancelar, limpa o ponto vermelho
+        const radius = 5;
+        ctx.clearRect(x - radius - 1, y - radius - 1, radius * 2 + 2, radius * 2 + 2);
+      }
+    }, 150);
   }
 });
+
 overlay.addEventListener('mousemove', (e) => {
   if (drawing && mode === 'draw') {
-    const lineWidth = parseInt(document.getElementById('line-width').value);
+    const thickness = document.getElementById('thickness').value;
     ctx.lineTo(e.offsetX, e.offsetY);
     ctx.strokeStyle = "black";
-    ctx.lineWidth = lineWidth;
+    ctx.lineWidth = thickness;
     ctx.lineCap = "round";
     ctx.stroke();
   }
 });
+
 overlay.addEventListener('mouseup', () => drawing = false);
 overlay.addEventListener('mouseleave', () => drawing = false);
 
-// Ao terminar de digitar o texto
-textInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const fontSize = document.getElementById('font-size').value;
-    const x = parseFloat(textInput.dataset.x);
-    const y = parseFloat(textInput.dataset.y) + parseInt(fontSize);
-    ctx.font = `${fontSize}px Arial`;
-    ctx.fillStyle = "black";
-    ctx.fillText(textInput.value, x, y);
-    textInput.style.display = 'none';
-  }
-});
-
-// Salvar PDF
+// === Salvar PDF ===
 document.getElementById('save-btn').addEventListener('click', async () => {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF();
 
-  // Combinar PDF e overlay
   const combinedCanvas = document.createElement('canvas');
   combinedCanvas.width = pdfCanvas.width;
   combinedCanvas.height = pdfCanvas.height;
