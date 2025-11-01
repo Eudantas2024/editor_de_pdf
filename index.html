@@ -15,7 +15,7 @@
     display: inline-block;
     border: 1px solid #ccc;
     background: white;
-    touch-action: none; /* permite desenhar e controlar zoom */
+    touch-action: none; /* permite desenhar sem mover a tela */
   }
   canvas {
     display: block;
@@ -29,7 +29,7 @@
   .toolbar {
     margin-bottom: 10px;
   }
-  button, select, input[type="range"] {
+  button, select {
     padding: 8px 15px;
     margin: 3px;
     border: none;
@@ -38,7 +38,7 @@
     border-radius: 4px;
     cursor: pointer;
   }
-  button:hover, select:hover, input[type="range"]:hover {
+  button:hover, select:hover {
     background-color: #005fa3;
   }
 </style>
@@ -73,21 +73,21 @@
 const fileInput = document.getElementById('file-input');
 const pdfCanvas = document.getElementById('pdf-canvas');
 const overlay = document.getElementById('overlay');
+const container = document.getElementById('pdf-container');
 const ctx = overlay.getContext('2d');
 const thicknessInput = document.getElementById('thickness');
 const zoomControl = document.getElementById('zoom-control');
 let drawing = false;
 let mode = null;
 let pdfPage, pdfScale = parseFloat(zoomControl.value);
-let texts = [];
+let texts = []; // armazenar textos e suas posições
 let redDot = null;
-let pinchStartDistance = null;
-let initialScale = pdfScale;
 
-// === EXIBIR PDF ===
+// === FUNÇÃO PARA EXIBIR PDF ===
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+
   const reader = new FileReader();
   reader.onload = async function() {
     const typedArray = new Uint8Array(this.result);
@@ -121,7 +121,7 @@ zoomControl.addEventListener('input', () => {
   renderPDF();
 });
 
-// === REDESENHAR TEXTOS ===
+// === FUNÇÃO PARA REDESENHAR TEXTOS ===
 function redrawTexts() {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
   texts.forEach(t => {
@@ -131,7 +131,7 @@ function redrawTexts() {
   });
 }
 
-// === RABISCO ===
+// === RABISCO COM MOUSE E TOQUE ===
 function getPosition(e) {
   const rect = overlay.getBoundingClientRect();
   if (e.touches && e.touches[0]) {
@@ -167,51 +167,15 @@ function endDraw() {
   drawing = false;
 }
 
-// === EVENTOS DE MOUSE ===
+// === TOQUE E MOUSE ===
 overlay.addEventListener('mousedown', startDraw);
 overlay.addEventListener('mousemove', draw);
 overlay.addEventListener('mouseup', endDraw);
 overlay.addEventListener('mouseleave', endDraw);
 
-// === EVENTOS DE TOQUE ===
-overlay.addEventListener('touchstart', (e) => {
-  if (e.touches.length === 1) {
-    startDraw(e);
-  } else if (e.touches.length === 2) {
-    // Início do zoom por pinça
-    pinchStartDistance = getTouchDistance(e);
-    initialScale = pdfScale;
-  }
-});
-overlay.addEventListener('touchmove', (e) => {
-  if (e.touches.length === 1 && mode === 'draw') {
-    draw(e);
-  } else if (e.touches.length === 2) {
-    // Controle de zoom por pinça
-    const newDistance = getTouchDistance(e);
-    if (pinchStartDistance) {
-      const zoomFactor = newDistance / pinchStartDistance;
-      pdfScale = Math.min(Math.max(initialScale * zoomFactor, 0.5), 3);
-      zoomControl.value = pdfScale.toFixed(2);
-      renderPDF();
-    }
-  }
-  e.preventDefault();
-});
-overlay.addEventListener('touchend', (e) => {
-  endDraw();
-  if (e.touches.length < 2) {
-    pinchStartDistance = null;
-  }
-});
-
-// === FUNÇÃO DISTÂNCIA DOS DEDOS ===
-function getTouchDistance(e) {
-  const [t1, t2] = e.touches;
-  const dx = t2.clientX - t1.clientX;
-  const dy = t2.clientY - t1.clientY;
-  return Math.sqrt(dx * dx + dy * dy);
-}
+overlay.addEventListener('touchstart', startDraw);
+overlay.addEventListener('touchmove', draw);
+overlay.addEventListener('touchend', endDraw);
 
 // === ADICIONAR TEXTO ===
 overlay.addEventListener('click', (e) => {
@@ -232,12 +196,14 @@ overlay.addEventListener('click', (e) => {
         texts.push({ text: texto, x, y });
         redrawTexts();
       }
+      // remover ponto
       if (redDot) {
         redrawTexts();
         redDot = null;
       }
     }, 200);
   } else if (mode === 'remove') {
+    // remover texto próximo
     const x = e.offsetX;
     const y = e.offsetY;
     texts = texts.filter(t => Math.hypot(t.x - x, t.y - y) > 20);
