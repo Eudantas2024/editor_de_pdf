@@ -126,7 +126,7 @@ function redrawTexts() {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
   texts.forEach(t => {
     ctx.font = "16px Arial";
-    ctx.fillStyle = "black";
+    ctx.fillStyle = "red";
     ctx.fillText(t.text, t.x, t.y);
   });
 }
