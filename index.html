@@ -80,6 +80,15 @@
     #delete-btn:hover {
       background-color: #b52b27;
     }
+
+    #text-input {
+      position: absolute;
+      display: none;
+      border: 1px solid #ccc;
+      font-size: 16px;
+      padding: 2px;
+      outline: none;
+    }
   </style>
 </head>
 <body>
@@ -99,6 +108,7 @@
 <div id="pdf-container">
   <canvas id="pdf-canvas"></canvas>
   <canvas id="overlay"></canvas>
+  <input type="text" id="text-input" placeholder="Digite aqui">
   <button id="delete-btn">Excluir texto</button>
 </div>
 
@@ -111,19 +121,20 @@
   const overlay = document.getElementById('overlay');
   const ctx = overlay.getContext('2d');
   const deleteBtn = document.getElementById('delete-btn');
+  const textInput = document.getElementById('text-input');
   const container = document.getElementById('pdf-container');
   let drawing = false;
   let mode = null;
   let pdfPage, pdfScale = 1.2;
   let texts = [];
   let selectedText = null;
-  let draggingText = false;
-  let dragOffsetX = 0, dragOffsetY = 0;
   let baseScale = 1.0;
   let lastDistance = null;
   let offsetX = 0, offsetY = 0;
   let startX = 0, startY = 0;
   let isPanning = false;
+  let movingText = false;
+  let movingOffsetX = 0, movingOffsetY = 0;
 
   // === Exibir PDF ===
   fileInput.addEventListener('change', async (e) => {
@@ -152,8 +163,8 @@
   }
 
   // === Alternar Modos ===
-  document.getElementById('move-btn').onclick = () => mode = 'move';
-  document.getElementById('draw-btn').onclick = () => mode = 'draw';
+  document.getElementById('move-btn').onclick = () => { mode = 'move'; textInput.style.display = 'none'; };
+  document.getElementById('draw-btn').onclick = () => { mode = 'draw'; textInput.style.display = 'none'; };
   document.getElementById('text-btn').onclick = () => mode = 'text';
 
   // === Coordenadas ===
@@ -185,17 +196,12 @@
     });
   }
 
-  // === Interações principais ===
+  // === Clique / Toque ===
   function startDraw(e) {
     const { x, y } = getCoords(e);
     if (e.touches && e.touches.length > 1) return;
 
-    if (mode === 'draw') {
-      drawing = true;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-    } 
-    else if (mode === 'text') {
+    if (mode === 'text') {
       selectedText = null;
       for (let t of texts) {
         const width = ctx.measureText(t.text).width;
@@ -205,48 +211,53 @@
         }
       }
 
-      if (selectedText) {
-        redrawTexts();
-        deleteBtn.style.display = 'block';
-        deleteBtn.style.left = `${selectedText.x * baseScale}px`;
-        deleteBtn.style.top = `${selectedText.y * baseScale + 5}px`;
-      } else {
-        deleteBtn.style.display = 'none';
-        const texto = prompt("Digite o texto:");
-        if (texto) {
-          texts.push({ text: texto, x, y });
-          redrawTexts();
-        }
+      if (!selectedText) {
+        textInput.style.left = `${x * baseScale}px`;
+        textInput.style.top = `${y * baseScale}px`;
+        textInput.style.display = 'block';
+        textInput.focus();
+
+        textInput.onkeydown = (ev) => {
+          if (ev.key === "Enter") {
+            const newText = textInput.value.trim();
+            if (newText) {
+              texts.push({ text: newText, x, y });
+              redrawTexts();
+            }
+            textInput.value = "";
+            textInput.style.display = 'none';
+          }
+        };
       }
-    } 
-    else if (mode === 'move') {
+    } else if (mode === 'move') {
       selectedText = null;
-      // verificar se clicou em algum texto para mover
       for (let t of texts) {
         const width = ctx.measureText(t.text).width;
         if (x >= t.x && x <= t.x + width && y <= t.y && y >= t.y - 16) {
           selectedText = t;
-          draggingText = true;
-          dragOffsetX = x - t.x;
-          dragOffsetY = y - t.y;
+          movingText = true;
+          movingOffsetX = x - t.x;
+          movingOffsetY = y - t.y;
           break;
         }
       }
 
-      // caso não tenha clicado em texto, entra no modo pan
       if (!selectedText) {
         isPanning = true;
         startX = e.touches ? e.touches[0].clientX : e.clientX;
         startY = e.touches ? e.touches[0].clientY : e.clientY;
-        container.style.cursor = "grabbing";
       }
+    } else if (mode === 'draw') {
+      drawing = true;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
     }
+
     e.preventDefault();
   }
 
   function drawMove(e) {
     const { x, y } = getCoords(e);
-
     if (mode === 'draw' && drawing) {
       const thickness = document.getElementById('thickness').value;
       ctx.lineTo(x, y);
@@ -255,30 +266,29 @@
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.stroke();
-    } 
-    else if (mode === 'move' && draggingText && selectedText) {
-      selectedText.x = x - dragOffsetX;
-      selectedText.y = y - dragOffsetY;
-      redrawTexts();
-    }
-    else if (mode === 'move' && isPanning) {
-      const currentX = e.touches ? e.touches[0].clientX : e.clientX;
-      const currentY = e.touches ? e.touches[0].clientY : e.clientY;
-      offsetX += (currentX - startX);
-      offsetY += (currentY - startY);
-      startX = currentX;
-      startY = currentY;
-      pdfCanvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
-      overlay.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+    } else if (mode === 'move') {
+      if (movingText && selectedText) {
+        selectedText.x = x - movingOffsetX;
+        selectedText.y = y - movingOffsetY;
+        redrawTexts();
+      } else if (isPanning) {
+        const currentX = e.touches ? e.touches[0].clientX : e.clientX;
+        const currentY = e.touches ? e.touches[0].clientY : e.clientY;
+        offsetX += (currentX - startX);
+        offsetY += (currentY - startY);
+        startX = currentX;
+        startY = currentY;
+        pdfCanvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+        overlay.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${baseScale})`;
+      }
     }
     e.preventDefault();
   }
 
   function endDraw(e) {
     drawing = false;
-    draggingText = false;
+    movingText = false;
     isPanning = false;
-    container.style.cursor = "grab";
     e.preventDefault();
   }
 
@@ -299,25 +309,16 @@
       lastDistance = distance;
     }
   });
+
   container.addEventListener('touchend', () => lastDistance = null);
 
-  deleteBtn.addEventListener('click', () => {
-    if (selectedText) {
-      texts = texts.filter(t => t !== selectedText);
-      selectedText = null;
-      deleteBtn.style.display = 'none';
-      redrawTexts();
-    }
-  });
-
+  // === Eventos ===
   overlay.addEventListener('mousedown', startDraw);
   overlay.addEventListener('mousemove', drawMove);
   overlay.addEventListener('mouseup', endDraw);
-  overlay.addEventListener('mouseleave', endDraw);
   overlay.addEventListener('touchstart', startDraw);
   overlay.addEventListener('touchmove', drawMove);
   overlay.addEventListener('touchend', endDraw);
-  overlay.addEventListener('touchcancel', endDraw);
 
   // === Salvar PDF ===
   document.getElementById('save-btn').addEventListener('click', async () => {
