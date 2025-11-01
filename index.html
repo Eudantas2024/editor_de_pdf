@@ -15,7 +15,7 @@
     display: inline-block;
     border: 1px solid #ccc;
     background: white;
-    touch-action: none; /* permite desenhar sem mover a tela */
+    touch-action: none;
   }
   canvas {
     display: block;
@@ -25,12 +25,13 @@
     top: 0;
     left: 0;
     cursor: crosshair;
+    touch-action: none;
   }
   .toolbar {
     margin-bottom: 10px;
   }
-  button, select {
-    padding: 8px 15px;
+  button, input[type="range"], label {
+    padding: 8px 10px;
     margin: 3px;
     border: none;
     background-color: #0078d7;
@@ -38,8 +39,31 @@
     border-radius: 4px;
     cursor: pointer;
   }
-  button:hover, select:hover {
+  button:hover {
     background-color: #005fa3;
+  }
+  input[type="range"] {
+    width: 100px;
+    background: transparent;
+    cursor: pointer;
+  }
+  label {
+    background: none;
+    color: black;
+    cursor: default;
+  }
+  #delete-btn {
+    position: absolute;
+    display: none;
+    background-color: #d9534f;
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: white;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #delete-btn:hover {
+    background-color: #b52b27;
   }
 </style>
 </head>
@@ -50,40 +74,36 @@
 <div class="toolbar">
   <input type="file" id="file-input" accept="application/pdf">
   <button id="draw-btn">✏️ Rabiscar</button>
-  <label>Espessura:
-    <input type="range" id="thickness" min="1" max="10" value="2">
-  </label>
   <button id="text-btn">🔤 Adicionar Texto</button>
-  <button id="remove-text-btn">❌ Remover Texto</button>
-  <label>Zoom:
-    <input type="range" id="zoom-control" min="0.5" max="3" step="0.1" value="1.2">
-  </label>
+  <label for="thickness">Espessura:</label>
+  <input type="range" id="thickness" min="1" max="10" value="2">
   <button id="save-btn">💾 Salvar PDF</button>
 </div>
 
 <div id="pdf-container">
   <canvas id="pdf-canvas"></canvas>
   <canvas id="overlay"></canvas>
+  <button id="delete-btn">Excluir texto</button>
 </div>
 
+<!-- PDF.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<!-- jsPDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <script>
 const fileInput = document.getElementById('file-input');
 const pdfCanvas = document.getElementById('pdf-canvas');
 const overlay = document.getElementById('overlay');
-const container = document.getElementById('pdf-container');
 const ctx = overlay.getContext('2d');
-const thicknessInput = document.getElementById('thickness');
-const zoomControl = document.getElementById('zoom-control');
+const deleteBtn = document.getElementById('delete-btn');
 let drawing = false;
 let mode = null;
-let pdfPage, pdfScale = parseFloat(zoomControl.value);
-let texts = []; // armazenar textos e suas posições
-let redDot = null;
+let pdfPage, pdfScale = 1.2;
+let texts = []; // armazenar textos adicionados
+let selectedText = null;
 
-// === FUNÇÃO PARA EXIBIR PDF ===
+// === Exibir PDF ===
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -93,48 +113,27 @@ fileInput.addEventListener('change', async (e) => {
     const typedArray = new Uint8Array(this.result);
     const pdf = await pdfjsLib.getDocument(typedArray).promise;
     pdfPage = await pdf.getPage(1);
-    renderPDF();
+
+    const viewport = pdfPage.getViewport({ scale: pdfScale });
+    pdfCanvas.width = viewport.width;
+    pdfCanvas.height = viewport.height;
+    overlay.width = viewport.width;
+    overlay.height = viewport.height;
+
+    const context = pdfCanvas.getContext('2d');
+    await pdfPage.render({ canvasContext: context, viewport }).promise;
   };
   reader.readAsArrayBuffer(file);
 });
 
-async function renderPDF() {
-  const viewport = pdfPage.getViewport({ scale: pdfScale });
-  const context = pdfCanvas.getContext('2d');
-  pdfCanvas.width = viewport.width;
-  pdfCanvas.height = viewport.height;
-  overlay.width = viewport.width;
-  overlay.height = viewport.height;
-
-  const renderContext = { canvasContext: context, viewport: viewport };
-  await pdfPage.render(renderContext).promise;
-
-  redrawTexts();
-}
-
-// === MODOS ===
+// === Alternar Modos ===
 document.getElementById('draw-btn').onclick = () => mode = 'draw';
 document.getElementById('text-btn').onclick = () => mode = 'text';
-document.getElementById('remove-text-btn').onclick = () => mode = 'remove';
-zoomControl.addEventListener('input', () => {
-  pdfScale = parseFloat(zoomControl.value);
-  renderPDF();
-});
 
-// === FUNÇÃO PARA REDESENHAR TEXTOS ===
-function redrawTexts() {
-  ctx.clearRect(0, 0, overlay.width, overlay.height);
-  texts.forEach(t => {
-    ctx.font = "16px Arial";
-    ctx.fillStyle = "red";
-    ctx.fillText(t.text, t.x, t.y);
-  });
-}
-
-// === RABISCO COM MOUSE E TOQUE ===
-function getPosition(e) {
-  const rect = overlay.getBoundingClientRect();
-  if (e.touches && e.touches[0]) {
+// === Função para coordenadas ===
+function getCoords(e) {
+  if (e.touches && e.touches.length > 0) {
+    const rect = overlay.getBoundingClientRect();
     return {
       x: e.touches[0].clientX - rect.left,
       y: e.touches[0].clientY - rect.top
@@ -144,74 +143,96 @@ function getPosition(e) {
   }
 }
 
+// === Redesenhar textos ===
+function redrawTexts() {
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  texts.forEach(t => {
+    ctx.font = "16px Arial";
+    ctx.fillStyle = "black";
+    ctx.fillText(t.text, t.x, t.y);
+    if (t === selectedText) {
+      const width = ctx.measureText(t.text).width;
+      ctx.strokeStyle = "blue";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(t.x - 2, t.y - 16, width + 4, 20);
+    }
+  });
+}
+
+// === Adicionar ou selecionar texto ===
 function startDraw(e) {
-  if (mode !== 'draw') return;
-  drawing = true;
-  const pos = getPosition(e);
-  ctx.beginPath();
-  ctx.moveTo(pos.x, pos.y);
-  e.preventDefault();
-}
-
-function draw(e) {
-  if (!drawing || mode !== 'draw') return;
-  const pos = getPosition(e);
-  ctx.lineTo(pos.x, pos.y);
-  ctx.strokeStyle = "black";
-  ctx.lineWidth = parseInt(thicknessInput.value);
-  ctx.stroke();
-  e.preventDefault();
-}
-
-function endDraw() {
-  drawing = false;
-}
-
-// === TOQUE E MOUSE ===
-overlay.addEventListener('mousedown', startDraw);
-overlay.addEventListener('mousemove', draw);
-overlay.addEventListener('mouseup', endDraw);
-overlay.addEventListener('mouseleave', endDraw);
-
-overlay.addEventListener('touchstart', startDraw);
-overlay.addEventListener('touchmove', draw);
-overlay.addEventListener('touchend', endDraw);
-
-// === ADICIONAR TEXTO ===
-overlay.addEventListener('click', (e) => {
-  if (mode === 'text') {
-    const x = e.offsetX;
-    const y = e.offsetY;
-
-    // ponto vermelho temporário
+  const { x, y } = getCoords(e);
+  if (mode === 'draw') {
+    drawing = true;
     ctx.beginPath();
-    ctx.arc(x, y, 4, 0, 2 * Math.PI);
-    ctx.fillStyle = "red";
-    ctx.fill();
-    redDot = { x, y };
+    ctx.moveTo(x, y);
+  } else if (mode === 'text') {
+    // verificar se clicou em um texto existente
+    selectedText = null;
+    for (let t of texts) {
+      const width = ctx.measureText(t.text).width;
+      if (x >= t.x && x <= t.x + width && y <= t.y && y >= t.y - 16) {
+        selectedText = t;
+        break;
+      }
+    }
 
-    setTimeout(() => {
+    if (selectedText) {
+      redrawTexts();
+      deleteBtn.style.display = 'block';
+      deleteBtn.style.left = `${selectedText.x}px`;
+      deleteBtn.style.top = `${selectedText.y + 5}px`;
+    } else {
+      deleteBtn.style.display = 'none';
       const texto = prompt("Digite o texto:");
       if (texto) {
         texts.push({ text: texto, x, y });
         redrawTexts();
       }
-      // remover ponto
-      if (redDot) {
-        redrawTexts();
-        redDot = null;
-      }
-    }, 200);
-  } else if (mode === 'remove') {
-    // remover texto próximo
-    const x = e.offsetX;
-    const y = e.offsetY;
-    texts = texts.filter(t => Math.hypot(t.x - x, t.y - y) > 20);
+    }
+  }
+  e.preventDefault();
+}
+
+function drawMove(e) {
+  if (!drawing || mode !== 'draw') return;
+  const { x, y } = getCoords(e);
+  const thickness = document.getElementById('thickness').value;
+  ctx.lineTo(x, y);
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = thickness;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  e.preventDefault();
+}
+
+function endDraw(e) {
+  drawing = false;
+  e.preventDefault();
+}
+
+// === Botão Excluir ===
+deleteBtn.addEventListener('click', () => {
+  if (selectedText) {
+    texts = texts.filter(t => t !== selectedText);
+    selectedText = null;
+    deleteBtn.style.display = 'none';
     redrawTexts();
   }
 });
 
-// === SALVAR PDF ===
+// === Eventos ===
+overlay.addEventListener('mousedown', startDraw);
+overlay.addEventListener('mousemove', drawMove);
+overlay.addEventListener('mouseup', endDraw);
+overlay.addEventListener('mouseleave', endDraw);
+overlay.addEventListener('touchstart', startDraw);
+overlay.addEventListener('touchmove', drawMove);
+overlay.addEventListener('touchend', endDraw);
+overlay.addEventListener('touchcancel', endDraw);
+
+// === Salvar PDF ===
 document.getElementById('save-btn').addEventListener('click', async () => {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF();
@@ -219,9 +240,11 @@ document.getElementById('save-btn').addEventListener('click', async () => {
   const combinedCanvas = document.createElement('canvas');
   combinedCanvas.width = pdfCanvas.width;
   combinedCanvas.height = pdfCanvas.height;
-  const cctx = combinedCanvas.getContext('2d');
-  cctx.drawImage(pdfCanvas, 0, 0);
-  cctx.drawImage(overlay, 0, 0);
+  const combinedCtx = combinedCanvas.getContext('2d');
+  combinedCtx.drawImage(pdfCanvas, 0, 0);
+
+  // redesenha textos e rabiscos no canvas combinado
+  combinedCtx.drawImage(overlay, 0, 0);
 
   const imgData = combinedCanvas.toDataURL("image/jpeg", 1.0);
   pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
