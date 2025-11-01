@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Editor de PDF Local</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f2f2f2;
+    margin: 20px;
+    text-align: center;
+  }
+  #pdf-container {
+    position: relative;
+    display: inline-block;
+    border: 1px solid #ccc;
+    background: white;
+  }
+  canvas {
+    display: block;
+  }
+  #overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    cursor: crosshair;
+  }
+  .toolbar {
+    margin-bottom: 10px;
+  }
+  button, select {
+    padding: 8px 15px;
+    margin: 3px;
+    border: none;
+    background-color: #0078d7;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover, select:hover {
+    background-color: #005fa3;
+  }
+  #text-input {
+    position: absolute;
+    border: 1px solid #000;
+    background: #fff;
+    display: none;
+    font-family: Arial, sans-serif;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<h2>Editor de PDF Local</h2>
+
+<div class="toolbar">
+  <input type="file" id="file-input" accept="application/pdf">
+  <button id="draw-btn">✏️ Rabiscar</button>
+  <select id="line-width">
+    <option value="1">1px</option>
+    <option value="2" selected>2px</option>
+    <option value="4">4px</option>
+    <option value="6">6px</option>
+    <option value="8">8px</option>
+  </select>
+  <button id="text-btn">🔤 Adicionar Texto</button>
+  <select id="font-size">
+    <option value="12">12px</option>
+    <option value="16" selected>16px</option>
+    <option value="20">20px</option>
+    <option value="24">24px</option>
+    <option value="30">30px</option>
+  </select>
+  <button id="save-btn">💾 Salvar PDF</button>
+</div>
+
+<div id="pdf-container">
+  <canvas id="pdf-canvas"></canvas>
+  <canvas id="overlay"></canvas>
+  <input type="text" id="text-input" placeholder="Digite aqui...">
+</div>
+
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<!-- jsPDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<script>
+const fileInput = document.getElementById('file-input');
+const pdfCanvas = document.getElementById('pdf-canvas');
+const overlay = document.getElementById('overlay');
+const textInput = document.getElementById('text-input');
+const ctx = overlay.getContext('2d');
+let drawing = false;
+let mode = null;
+let pdfPage;
+let pdfScale = 1.2;
+
+// Exibir o PDF
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const fileReader = new FileReader();
+  fileReader.onload = async function() {
+    const typedArray = new Uint8Array(this.result);
+    const pdf = await pdfjsLib.getDocument(typedArray).promise;
+    pdfPage = await pdf.getPage(1);
+
+    const viewport = pdfPage.getViewport({ scale: pdfScale });
+    const context = pdfCanvas.getContext('2d');
+    pdfCanvas.width = viewport.width;
+    pdfCanvas.height = viewport.height;
+    overlay.width = viewport.width;
+    overlay.height = viewport.height;
+
+    const renderContext = { canvasContext: context, viewport: viewport };
+    await pdfPage.render(renderContext).promise;
+  };
+  fileReader.readAsArrayBuffer(file);
+});
+
+// Alternar modos
+document.getElementById('draw-btn').onclick = () => {
+  mode = 'draw';
+  textInput.style.display = 'none';
+};
+document.getElementById('text-btn').onclick = () => {
+  mode = 'text';
+};
+
+// Desenhar
+overlay.addEventListener('mousedown', (e) => {
+  if (mode === 'draw') {
+    drawing = true;
+    ctx.beginPath();
+    ctx.moveTo(e.offsetX, e.offsetY);
+  } else if (mode === 'text') {
+    // Mostrar campo de texto na posição clicada
+    textInput.style.display = 'block';
+    textInput.style.left = (overlay.offsetLeft + e.offsetX) + 'px';
+    textInput.style.top = (overlay.offsetTop + e.offsetY) + 'px';
+    textInput.value = '';
+    textInput.focus();
+    textInput.dataset.x = e.offsetX;
+    textInput.dataset.y = e.offsetY;
+  }
+});
+overlay.addEventListener('mousemove', (e) => {
+  if (drawing && mode === 'draw') {
+    const lineWidth = parseInt(document.getElementById('line-width').value);
+    ctx.lineTo(e.offsetX, e.offsetY);
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = "round";
+    ctx.stroke();
+  }
+});
+overlay.addEventListener('mouseup', () => drawing = false);
+overlay.addEventListener('mouseleave', () => drawing = false);
+
+// Ao terminar de digitar o texto
+textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const fontSize = document.getElementById('font-size').value;
+    const x = parseFloat(textInput.dataset.x);
+    const y = parseFloat(textInput.dataset.y) + parseInt(fontSize);
+    ctx.font = `${fontSize}px Arial`;
+    ctx.fillStyle = "black";
+    ctx.fillText(textInput.value, x, y);
+    textInput.style.display = 'none';
+  }
+});
+
+// Salvar PDF
+document.getElementById('save-btn').addEventListener('click', async () => {
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF();
+
+  // Combinar PDF e overlay
+  const combinedCanvas = document.createElement('canvas');
+  combinedCanvas.width = pdfCanvas.width;
+  combinedCanvas.height = pdfCanvas.height;
+  const combinedCtx = combinedCanvas.getContext('2d');
+  combinedCtx.drawImage(pdfCanvas, 0, 0);
+  combinedCtx.drawImage(overlay, 0, 0);
+
+  const imgData = combinedCanvas.toDataURL("image/jpeg", 1.0);
+  pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
+  pdf.save('pdf_editado.pdf');
+});
+</script>
+
+</body>
+</html>
